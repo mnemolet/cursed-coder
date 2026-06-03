@@ -1,0 +1,29 @@
+[package]
+name = "cursed-coder"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "cursedcoder"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3            # Full optimizations (speed over compile time)
+lto = "fat"              # Link-Time Optimization across all dependency crates
+codegen-units = 1        # Reduces parallel compilation units to maximize LTO optimization passes
+panic = "abort"          # Bypasses stack unwinding setup; shrinks binary size and slightly boosts speed
+strip = true             # Automatically strips all debug symbols and symbols tables from final binary
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
+dirs = "6.0.0"
+dotenvy = "0.15.7"
+indicatif = "0.18.4"
+reqwest = { version = "0.13.3", features = ["json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tempfile = "3.27.0"
+tokio = { version = "1.52.3", features = ["full"] }
+toml = "1.1.2"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "registry"] }
