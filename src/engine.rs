@@ -111,10 +111,16 @@ pub fn initialize_workspace(workspace_dir: &Path) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct StepsFile {
+    step: Vec<Step>,
+}
+
 pub fn parse_and_validate_steps(workspace_dir: &Path) -> Result<StepGraph, GraphError> {
     let steps_path = workspace_dir.join(".cursedcoder").join("steps.toml");
     let content = fs::read_to_string(&steps_path)?;
-    let steps: Vec<Step> = toml::from_str(&content)?;
+    let file: StepsFile = toml::from_str(&content)?;
+    let steps = file.step;
 
     if steps.is_empty() {
         return Err(GraphError::MissingEntry("(none)".to_string()));
