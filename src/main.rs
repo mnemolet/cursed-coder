@@ -61,6 +61,10 @@ async fn main() {
                 &cwd,
             );
 
+            cursed_coder::gatekeeper::verify_execution_consent(args.yes).unwrap_or_else(|_| {
+                std::process::exit(1);
+            });
+
             if !args.yes {
                 println!();
                 println!("Entering execution loop with step '{}'...", graph.entry_point);
