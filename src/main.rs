@@ -3,6 +3,7 @@ use cursed_coder::cli::{Args, CliSubcommand};
 use cursed_coder::config;
 use cursed_coder::dashboard;
 use cursed_coder::engine;
+use cursed_coder::memory::Memory;
 use std::path::Path;
 
 #[tokio::main]
@@ -67,7 +68,37 @@ async fn main() {
 
             if !args.yes {
                 println!();
-                println!("Entering execution loop with step '{}'...", graph.entry_point);
+            }
+
+            let max_cycles = args.cycles.map(|c| c as u64).unwrap_or(
+                cfg.max_cycles,
+            );
+
+            let mut runtime_memory = Memory::load_or_create(&cwd.join(".cursedcoder"))
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to load runtime memory: {e}");
+                    std::process::exit(1);
+                });
+
+            runtime_memory.set_variable(
+                "_cursed_entry_point",
+                serde_json::Value::String(graph.entry_point.clone()),
+            );
+            runtime_memory.set_variable(
+                "_cursed_workspace",
+                serde_json::Value::String(cwd.to_string_lossy().to_string()),
+            );
+
+            if let Err(e) = engine::run_pipeline(
+                max_cycles,
+                graph.steps,
+                &mut runtime_memory,
+                &cwd,
+            )
+            .await
+            {
+                eprintln!("Pipeline error: {e}");
+                std::process::exit(1);
             }
         }
     }

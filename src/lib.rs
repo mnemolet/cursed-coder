@@ -6,3 +6,4 @@ pub mod gatekeeper;
 pub mod guard;
 pub mod memory;
 pub mod scanner;
+pub mod spinner;
