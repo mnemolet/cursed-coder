@@ -18,10 +18,15 @@ fn test_root_path_guardrail_rejects_system_root() -> Result<(), Box<dyn std::err
 }
 
 #[test]
-fn test_root_path_guardrail_rejects_etc() -> Result<(), Box<dyn std::error::Error>> {
-    match cursed_coder::guard::validate_workspace_root(Path::new("/etc")) {
+fn test_root_path_guardrail_rejects_system_paths() -> Result<(), Box<dyn std::error::Error>> {
+    let path = if cfg!(target_os = "windows") {
+        Path::new("C:\\Windows")
+    } else {
+        Path::new("/etc")
+    };
+    match cursed_coder::guard::validate_workspace_root(path) {
         Err(msg) => assert!(msg.contains("host system root paths")),
-        Ok(_) => panic!("expected Err for /etc, got Ok"),
+        Ok(_) => panic!("expected Err for {path:?}, got Ok"),
     }
     Ok(())
 }
