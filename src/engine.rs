@@ -1,3 +1,4 @@
+use crate::handlers;
 use crate::memory::{Memory, StepOutcomeRecord};
 use crate::scanner;
 use crate::spinner::EngineSpinner;
@@ -386,11 +387,23 @@ async fn execute_step(
                 info!("Step '{}': no command configured, skipping", step.name);
                 StepOutcome::Success
             } else {
-                info!("Step '{}': shell command execution (placeholder)", step.name);
-                let simulated_tokens = 100;
-                let simulated_cost = 0.0002;
-                memory.add_tokens(simulated_tokens, simulated_cost);
-                StepOutcome::Success
+                match handlers::execute_shell_command(&step.command, workspace_dir) {
+                    Ok(output) => {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        if !stdout.is_empty() {
+                            info!("Step '{}': stdout — {stdout}", step.name);
+                        }
+                        memory.set_variable(
+                            &format!("_{}_stdout", step.name.replace(' ', "_")),
+                            serde_json::Value::String(stdout.to_string()),
+                        );
+                        StepOutcome::Success
+                    }
+                    Err(e) => {
+                        warn!("Step '{}': shell command failed: {e}", step.name);
+                        StepOutcome::Failed
+                    }
+                }
             }
         }
     };
@@ -422,7 +435,19 @@ fn handle_task_driven_step(
 
             let outcome = match step.action_type {
                 ActionType::LlmCompletion => StepOutcome::TaskDrivenSuccess,
-                ActionType::ShellCommand => StepOutcome::TaskDrivenSuccess,
+                ActionType::ShellCommand => {
+                    if step.command.is_empty() {
+                        StepOutcome::TaskDrivenSuccess
+                    } else {
+                        match handlers::execute_shell_command(&step.command, workspace_dir) {
+                            Ok(_) => StepOutcome::TaskDrivenSuccess,
+                            Err(e) => {
+                                warn!("Step '{}': task shell command failed: {e}", step.name);
+                                StepOutcome::Failed
+                            }
+                        }
+                    }
+                }
             };
 
             if let Err(e) = scanner::mark_task_completed(workspace_dir, task.id) {
