@@ -115,6 +115,11 @@ pub fn initialize_workspace(workspace_dir: &Path) -> Result<(), Box<dyn std::err
         fs::write(&steps_path, STEPS_TOML_TEMPLATE)?;
     }
 
+    let tasks_path = dot_dir.join("tasks.toml");
+    if !tasks_path.exists() {
+        fs::write(&tasks_path, "")?;
+    }
+
     Ok(())
 }
 

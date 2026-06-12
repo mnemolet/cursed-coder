@@ -107,6 +107,46 @@ pub fn is_blocked_path(path: &Path) -> bool {
     false
 }
 
+/// Checks if `workspace_path` resolves to a system root directory
+/// (`/`, `/etc`, `/usr`, etc. on Unix; `C:\`, `C:\Windows` on Windows).
+/// Returns an error with the standard prohibition message when matched.
+pub fn validate_workspace_root(workspace_path: &Path) -> Result<(), String> {
+    let system_roots: &[&Path] = if cfg!(target_os = "windows") {
+        &[Path::new("C:\\"), Path::new("C:\\Windows")]
+    } else {
+        &[
+            Path::new("/"),
+            Path::new("/etc"),
+            Path::new("/usr"),
+            Path::new("/var"),
+            Path::new("/bin"),
+            Path::new("/sbin"),
+        ]
+    };
+
+    let canonical = workspace_path
+        .canonicalize()
+        .unwrap_or_else(|_| workspace_path.to_path_buf());
+
+    for root in system_roots {
+        if canonical == *root {
+            return Err(
+                "Error: Execution prohibited within host system root paths.".to_string(),
+            );
+        }
+        // For non-root system paths (e.g., /etc, /usr) also check starts_with
+        // so that /etc/subdir is caught.  Skip this for bare "/" because
+        // every absolute path starts with "/".
+        if *root != Path::new("/") && canonical.starts_with(root) {
+            return Err(
+                "Error: Execution prohibited within host system root paths.".to_string(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub fn print_critical_warning(message: &str) {
     eprintln!();
     eprintln!("==============================================");
