@@ -130,17 +130,13 @@ pub fn validate_workspace_root(workspace_path: &Path) -> Result<(), String> {
 
     for root in system_roots {
         if canonical == *root {
-            return Err(
-                "Error: Execution prohibited within host system root paths.".to_string(),
-            );
+            return Err("Error: Execution prohibited within host system root paths.".to_string());
         }
         // For non-root system paths (e.g., /etc, /usr) also check starts_with
         // so that /etc/subdir is caught.  Skip this for bare "/" because
         // every absolute path starts with "/".
         if *root != Path::new("/") && canonical.starts_with(root) {
-            return Err(
-                "Error: Execution prohibited within host system root paths.".to_string(),
-            );
+            return Err("Error: Execution prohibited within host system root paths.".to_string());
         }
     }
 

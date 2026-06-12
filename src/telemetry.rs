@@ -51,7 +51,9 @@ impl<'a> MakeWriter<'a> for LogWriter {
 }
 
 fn timestamp_filename() -> String {
-    let dur = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let total_secs = dur.as_secs();
 
     let days = total_secs / 86400;

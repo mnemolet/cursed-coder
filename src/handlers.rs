@@ -55,10 +55,7 @@ pub async fn execute_llm_completion(
 
     let response = crate::api::send_completion(provider, model, &resolved).await?;
 
-    memory.set_variable(
-        output_variable_key,
-        serde_json::Value::String(response),
-    );
+    memory.set_variable(output_variable_key, serde_json::Value::String(response));
 
     memory.add_tokens(0, 0.0);
     memory.record_step(true);
@@ -94,13 +91,8 @@ pub fn execute_shell_command(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let exit_code = output.status.code().unwrap_or(-1);
-        error!(
-            "Shell command failed (exit code {exit_code}): {command_string}\nstderr: {stderr}"
-        );
-        return Err(format!(
-            "shell command exited with code {exit_code}: {stderr}"
-        )
-        .into());
+        error!("Shell command failed (exit code {exit_code}): {command_string}\nstderr: {stderr}");
+        return Err(format!("shell command exited with code {exit_code}: {stderr}").into());
     }
 
     info!("Shell command completed successfully (exit code 0)");

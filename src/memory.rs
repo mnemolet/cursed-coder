@@ -83,7 +83,9 @@ pub struct Memory {
 }
 
 fn generate_session_id() -> String {
-    let dur = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let time_part = dur.as_nanos();
     let random_part: u64 = {
         use std::hash::{Hash, Hasher};
@@ -97,7 +99,9 @@ fn generate_session_id() -> String {
 }
 
 fn timestamp_iso() -> String {
-    let dur = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let total_secs = dur.as_secs();
     let frac_millis = dur.subsec_millis();
 

@@ -67,7 +67,11 @@ impl std::fmt::Display for GraphError {
             GraphError::MissingEntry(name) => {
                 write!(f, "entry point step '{name}' not found in steps.toml")
             }
-            GraphError::BrokenTransition { step, field, target } => {
+            GraphError::BrokenTransition {
+                step,
+                field,
+                target,
+            } => {
                 write!(
                     f,
                     "step '{step}' has {field} pointing to '{target}' which does not exist"
@@ -181,9 +185,7 @@ pub fn has_steps_toml(workspace_dir: &Path) -> bool {
 
 /// Returns `true` if the steps.toml content matches the default template.
 pub fn is_unconfigured_template(workspace_dir: &Path) -> bool {
-    let path = workspace_dir
-        .join(".cursedcoder")
-        .join("steps.toml");
+    let path = workspace_dir.join(".cursedcoder").join("steps.toml");
     fs::read_to_string(&path)
         .map(|content| content.trim() == STEPS_TOML_TEMPLATE.trim())
         .unwrap_or(false)
@@ -293,9 +295,7 @@ pub async fn run_pipeline(
         let outcome = execute_step(step, memory, workspace_dir).await;
 
         let (next, status_str) = match &outcome {
-            StepOutcome::TaskDrivenSuccess | StepOutcome::Success => {
-                (&step.on_success, "success")
-            }
+            StepOutcome::TaskDrivenSuccess | StepOutcome::Success => (&step.on_success, "success"),
             StepOutcome::Failed => {
                 if cycle as u32 <= step.max_retries {
                     (&step.on_retry, "retry")
@@ -317,7 +317,10 @@ pub async fn run_pipeline(
             return Err(EngineError::StepNotFound(transition));
         }
 
-        memory.record_step(matches!(&outcome, StepOutcome::Success | StepOutcome::TaskDrivenSuccess));
+        memory.record_step(matches!(
+            &outcome,
+            StepOutcome::Success | StepOutcome::TaskDrivenSuccess
+        ));
 
         if matches!(&outcome, StepOutcome::Failed) {
             memory.metrics.backtrack_counts += 1;
@@ -349,11 +352,7 @@ pub async fn run_pipeline(
     Ok(())
 }
 
-async fn execute_step(
-    step: &Step,
-    memory: &mut Memory,
-    workspace_dir: &Path,
-) -> StepOutcome {
+async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) -> StepOutcome {
     info!("Executing step: {} ({:?})", step.name, step.action_type);
 
     if step.task_management_enabled {
@@ -369,7 +368,11 @@ async fn execute_step(
                 let prompt_path = workspace_dir.join(&step.prompt);
                 match fs::read_to_string(&prompt_path) {
                     Ok(content) => {
-                        info!("Step '{}': LLM prompt loaded ({} bytes)", step.name, content.len());
+                        info!(
+                            "Step '{}': LLM prompt loaded ({} bytes)",
+                            step.name,
+                            content.len()
+                        );
                         let simulated_tokens = content.len() as u64 / 4;
                         let simulated_cost = simulated_tokens as f64 * 0.000_002;
                         memory.add_tokens(simulated_tokens, simulated_cost);
@@ -411,11 +414,7 @@ async fn execute_step(
     outcome
 }
 
-fn handle_task_driven_step(
-    step: &Step,
-    memory: &mut Memory,
-    workspace_dir: &Path,
-) -> StepOutcome {
+fn handle_task_driven_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) -> StepOutcome {
     info!("Step '{}': task-driven mode enabled", step.name);
 
     match scanner::parse_active_task(workspace_dir) {
@@ -451,7 +450,10 @@ fn handle_task_driven_step(
             };
 
             if let Err(e) = scanner::mark_task_completed(workspace_dir, task.id) {
-                warn!("Step '{}': failed to mark task {} complete: {e}", step.name, task.id);
+                warn!(
+                    "Step '{}': failed to mark task {} complete: {e}",
+                    step.name, task.id
+                );
             } else {
                 info!("Step '{}': marked task {} complete", step.name, task.id);
             }
@@ -463,7 +465,10 @@ fn handle_task_driven_step(
             StepOutcome::TaskDrivenSuccess
         }
         scanner::TaskStatus::NoTaskFile => {
-            info!("Step '{}': no tasks.toml found, falling back to standard mode", step.name);
+            info!(
+                "Step '{}': no tasks.toml found, falling back to standard mode",
+                step.name
+            );
             StepOutcome::Success
         }
         scanner::TaskStatus::InvalidFormat(e) => {

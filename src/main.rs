@@ -26,10 +26,12 @@ async fn main() {
         .map(|p| p.join("cursedcoder"))
         .unwrap_or_else(|| Path::new(".").to_path_buf());
 
-    cursed_coder::telemetry::init_telemetry(&cfg.log_level, config_dir.clone()).unwrap_or_else(|e| {
-        eprintln!("Failed to initialize telemetry: {e}");
-        std::process::exit(1);
-    });
+    cursed_coder::telemetry::init_telemetry(&cfg.log_level, config_dir.clone()).unwrap_or_else(
+        |e| {
+            eprintln!("Failed to initialize telemetry: {e}");
+            std::process::exit(1);
+        },
+    );
 
     match args.command {
         Some(CliSubcommand::Init) => {
@@ -82,9 +84,7 @@ async fn main() {
                 println!();
             }
 
-            let max_cycles = args.cycles.map(|c| c as u64).unwrap_or(
-                cfg.max_cycles,
-            );
+            let max_cycles = args.cycles.map(|c| c as u64).unwrap_or(cfg.max_cycles);
 
             let mut runtime_memory = Memory::load_or_create(&cwd.join(".cursedcoder"))
                 .unwrap_or_else(|e| {
@@ -101,13 +101,8 @@ async fn main() {
                 serde_json::Value::String(cwd.to_string_lossy().to_string()),
             );
 
-            if let Err(e) = engine::run_pipeline(
-                max_cycles,
-                graph.steps,
-                &mut runtime_memory,
-                &cwd,
-            )
-            .await
+            if let Err(e) =
+                engine::run_pipeline(max_cycles, graph.steps, &mut runtime_memory, &cwd).await
             {
                 eprintln!("Pipeline error: {e}");
                 std::process::exit(1);
