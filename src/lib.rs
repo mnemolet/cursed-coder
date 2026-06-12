@@ -5,6 +5,7 @@ pub mod dashboard;
 pub mod engine;
 pub mod gatekeeper;
 pub mod guard;
+pub mod handlers;
 pub mod memory;
 pub mod scanner;
 pub mod spinner;
