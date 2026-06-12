@@ -1,10 +1,11 @@
-use crate::memory::Memory;
+use crate::memory::{Memory, StepOutcomeRecord};
+use crate::scanner;
 use crate::spinner::EngineSpinner;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -33,6 +34,8 @@ pub struct Step {
     pub max_retries: u32,
     #[serde(default)]
     pub on_retry: String,
+    #[serde(default)]
+    pub task_management_enabled: bool,
 }
 
 const fn default_max_retries() -> u32 {
@@ -100,6 +103,7 @@ on_success = ""
 on_failure = ""
 max_retries = 1
 on_retry = ""
+task_management_enabled = false
 "#;
 
 pub fn initialize_workspace(workspace_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -173,6 +177,7 @@ pub fn has_steps_toml(workspace_dir: &Path) -> bool {
 pub enum EngineError {
     StepNotFound(String),
     MaxCyclesReached { limit: u64, actual: u64 },
+    MemoryCorruption(String),
     Memory(crate::memory::MemoryError),
     Io(std::io::Error),
 }
@@ -186,6 +191,9 @@ impl std::fmt::Display for EngineError {
             EngineError::MaxCyclesReached { limit, actual } => {
                 write!(f, "max cycles ({limit}) reached after {actual} cycles")
             }
+            EngineError::MemoryCorruption(msg) => {
+                write!(f, "memory corruption detected: {msg}")
+            }
             EngineError::Memory(e) => write!(f, "memory error: {e}"),
             EngineError::Io(e) => write!(f, "I/O error: {e}"),
         }
@@ -196,7 +204,12 @@ impl std::error::Error for EngineError {}
 
 impl From<crate::memory::MemoryError> for EngineError {
     fn from(e: crate::memory::MemoryError) -> Self {
-        EngineError::Memory(e)
+        match e {
+            crate::memory::MemoryError::Serde(err) => {
+                EngineError::MemoryCorruption(err.to_string())
+            }
+            other => EngineError::Memory(other),
+        }
     }
 }
 
@@ -209,6 +222,7 @@ impl From<std::io::Error> for EngineError {
 enum StepOutcome {
     Success,
     Failed,
+    TaskDrivenSuccess,
 }
 
 /// Runs the autonomous execution pipeline.
@@ -220,15 +234,13 @@ pub async fn run_pipeline(
     max_cycles: u64,
     steps: HashMap<String, Step>,
     memory: &mut Memory,
-    _workspace_dir: &Path,
+    workspace_dir: &Path,
 ) -> Result<(), EngineError> {
     let spinner = EngineSpinner::new();
     let mut current_step_name = memory
         .get_variable("_cursed_entry_point")
         .and_then(|v| v.as_str().map(String::from))
-        .unwrap_or_else(|| {
-            steps.keys().next().cloned().unwrap_or_default()
-        });
+        .unwrap_or_else(|| steps.keys().next().cloned().unwrap_or_default());
     let mut cycle: u64 = 0;
 
     loop {
@@ -245,40 +257,62 @@ pub async fn run_pipeline(
             });
         }
 
-        let step = steps.get(&current_step_name).ok_or_else(|| {
-            EngineError::StepNotFound(current_step_name.clone())
-        })?;
+        let step = steps
+            .get(&current_step_name)
+            .ok_or_else(|| EngineError::StepNotFound(current_step_name.clone()))?;
 
         let msg = format!("[{cycle}] {}", step.name);
         spinner.set_message(msg);
 
-        let outcome = execute_step(step, memory).await;
+        let outcome = execute_step(step, memory, workspace_dir).await;
 
-        let next = match &outcome {
-            StepOutcome::Success => &step.on_success,
+        let (next, status_str) = match &outcome {
+            StepOutcome::TaskDrivenSuccess | StepOutcome::Success => {
+                (&step.on_success, "success")
+            }
             StepOutcome::Failed => {
                 if cycle as u32 <= step.max_retries {
-                    &step.on_retry
+                    (&step.on_retry, "retry")
                 } else {
-                    &step.on_failure
+                    (&step.on_failure, "failed")
                 }
             }
         };
 
-        let transition = if next.is_empty() || next == "exit" || next == "done" {
-            break;
+        let is_terminal = next.is_empty() || next == "exit" || next == "done";
+        let transition = if is_terminal {
+            String::new()
         } else {
             next.clone()
         };
 
-        if !steps.contains_key(&transition) {
+        if !transition.is_empty() && !steps.contains_key(&transition) {
             memory.save()?;
             return Err(EngineError::StepNotFound(transition));
         }
 
-        current_step_name = transition;
-        memory.record_step(matches!(&outcome, StepOutcome::Success));
+        memory.record_step(matches!(&outcome, StepOutcome::Success | StepOutcome::TaskDrivenSuccess));
+
+        if matches!(&outcome, StepOutcome::Failed) {
+            memory.metrics.backtrack_counts += 1;
+        }
+
+        memory.push_outcome(StepOutcomeRecord {
+            cycle,
+            step_name: step.name.clone(),
+            status: status_str.to_string(),
+            tokens_consumed: memory.cycle_analytics.total_tokens_consumed,
+            cost_usd: memory.cycle_analytics.estimated_cost_usd,
+            transition: transition.clone(),
+        });
+
         memory.save()?;
+
+        if is_terminal {
+            break;
+        }
+
+        current_step_name = transition;
     }
 
     memory.cycle_analytics.current_cycle = cycle;
@@ -289,41 +323,102 @@ pub async fn run_pipeline(
     Ok(())
 }
 
-async fn execute_step(step: &Step, memory: &mut Memory) -> StepOutcome {
+async fn execute_step(
+    step: &Step,
+    memory: &mut Memory,
+    workspace_dir: &Path,
+) -> StepOutcome {
     info!("Executing step: {} ({:?})", step.name, step.action_type);
 
-    match step.action_type {
+    if step.task_management_enabled {
+        return handle_task_driven_step(step, memory, workspace_dir);
+    }
+
+    let outcome = match step.action_type {
         ActionType::LlmCompletion => {
             if step.prompt.is_empty() {
                 info!("Step '{}': no prompt configured, skipping", step.name);
-                return StepOutcome::Success;
-            }
-            let prompt_path = workspace_dir_for(memory).join(&step.prompt);
-            match fs::read_to_string(&prompt_path) {
-                Ok(prompt_content) => {
-                    info!("Step '{}': LLM prompt loaded ({} bytes)", step.name, prompt_content.len());
-                    StepOutcome::Success
-                }
-                Err(e) => {
-                    info!("Step '{}': failed to read prompt: {e}", step.name);
-                    StepOutcome::Failed
+                StepOutcome::Success
+            } else {
+                let prompt_path = workspace_dir.join(&step.prompt);
+                match fs::read_to_string(&prompt_path) {
+                    Ok(content) => {
+                        info!("Step '{}': LLM prompt loaded ({} bytes)", step.name, content.len());
+                        let simulated_tokens = content.len() as u64 / 4;
+                        let simulated_cost = simulated_tokens as f64 * 0.000_002;
+                        memory.add_tokens(simulated_tokens, simulated_cost);
+                        StepOutcome::Success
+                    }
+                    Err(e) => {
+                        warn!("Step '{}': failed to read prompt: {e}", step.name);
+                        StepOutcome::Failed
+                    }
                 }
             }
         }
         ActionType::ShellCommand => {
             if step.command.is_empty() {
                 info!("Step '{}': no command configured, skipping", step.name);
-                return StepOutcome::Success;
+                StepOutcome::Success
+            } else {
+                info!("Step '{}': shell command execution (placeholder)", step.name);
+                let simulated_tokens = 100;
+                let simulated_cost = 0.0002;
+                memory.add_tokens(simulated_tokens, simulated_cost);
+                StepOutcome::Success
             }
-            info!("Step '{}': shell command execution (placeholder)", step.name);
-            StepOutcome::Success
         }
-    }
+    };
+
+    outcome
 }
 
-fn workspace_dir_for(memory: &Memory) -> std::path::PathBuf {
-    memory
-        .get_variable("_cursed_workspace")
-        .and_then(|v| v.as_str().map(std::path::PathBuf::from))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+fn handle_task_driven_step(
+    step: &Step,
+    memory: &mut Memory,
+    workspace_dir: &Path,
+) -> StepOutcome {
+    info!("Step '{}': task-driven mode enabled", step.name);
+
+    match scanner::parse_active_task(workspace_dir) {
+        scanner::TaskStatus::ActiveTask(task) => {
+            info!(
+                "Step '{}': reconciling with active task {} — {}",
+                step.name, task.id, task.task
+            );
+            memory.set_variable(
+                "_active_task_id",
+                serde_json::Value::Number(serde_json::Number::from(task.id)),
+            );
+            memory.set_variable(
+                "_active_task_description",
+                serde_json::Value::String(task.task),
+            );
+
+            let outcome = match step.action_type {
+                ActionType::LlmCompletion => StepOutcome::TaskDrivenSuccess,
+                ActionType::ShellCommand => StepOutcome::TaskDrivenSuccess,
+            };
+
+            if let Err(e) = scanner::mark_task_completed(workspace_dir, task.id) {
+                warn!("Step '{}': failed to mark task {} complete: {e}", step.name, task.id);
+            } else {
+                info!("Step '{}': marked task {} complete", step.name, task.id);
+            }
+
+            outcome
+        }
+        scanner::TaskStatus::AllTasksCompleted => {
+            info!("Step '{}': all tasks already completed", step.name);
+            StepOutcome::TaskDrivenSuccess
+        }
+        scanner::TaskStatus::NoTaskFile => {
+            info!("Step '{}': no tasks.toml found, falling back to standard mode", step.name);
+            StepOutcome::Success
+        }
+        scanner::TaskStatus::InvalidFormat(e) => {
+            warn!("Step '{}': tasks.toml has invalid format: {e}", step.name);
+            StepOutcome::Failed
+        }
+    }
 }

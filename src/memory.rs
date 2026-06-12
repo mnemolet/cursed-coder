@@ -58,6 +58,16 @@ pub struct Metrics {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StepOutcomeRecord {
+    pub cycle: u64,
+    pub step_name: String,
+    pub status: String,
+    pub tokens_consumed: u64,
+    pub cost_usd: f64,
+    pub transition: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Memory {
     pub metadata: MemoryMetadata,
     #[serde(default)]
@@ -66,6 +76,8 @@ pub struct Memory {
     pub cycle_analytics: CycleAnalytics,
     #[serde(default)]
     pub metrics: Metrics,
+    #[serde(default)]
+    pub step_outcomes: Vec<StepOutcomeRecord>,
     #[serde(skip)]
     dir: PathBuf,
 }
@@ -144,6 +156,7 @@ impl Memory {
                     failed_steps: 0,
                     backtrack_counts: 0,
                 },
+                step_outcomes: Vec::new(),
                 dir: dir.to_path_buf(),
             };
             mem.save()?;
@@ -169,6 +182,10 @@ impl Memory {
         } else {
             self.metrics.failed_steps += 1;
         }
+    }
+
+    pub fn push_outcome(&mut self, record: StepOutcomeRecord) {
+        self.step_outcomes.push(record);
     }
 
     pub fn add_tokens(&mut self, tokens: u64, cost: f64) {
