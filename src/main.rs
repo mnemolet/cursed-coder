@@ -3,6 +3,7 @@ use cursed_coder::cli::{Args, CliSubcommand};
 use cursed_coder::config;
 use cursed_coder::dashboard;
 use cursed_coder::engine;
+use cursed_coder::guard;
 use cursed_coder::memory::Memory;
 use std::path::Path;
 
@@ -10,6 +11,11 @@ use std::path::Path;
 async fn main() {
     let args = Args::parse();
     let cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+
+    if let Err(e) = guard::validate_workspace_root(&cwd) {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
 
     match args.command {
         Some(CliSubcommand::Init) => {
