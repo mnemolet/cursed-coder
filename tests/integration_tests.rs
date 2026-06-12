@@ -1,6 +1,35 @@
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
+// Test Case 0: Empty Workspace Graceful Termination
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_launch_in_empty_workspace_gracefully_terminates() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+
+    assert!(
+        !cursed_coder::engine::has_steps_toml(dir.path()),
+        "empty directory should not be recognised as a workspace"
+    );
+
+    match cursed_coder::engine::parse_and_validate_steps(dir.path()) {
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("steps.toml")
+                    || msg.contains("No such file")
+                    || msg.contains("file not found"),
+                "error should reference the missing steps.toml, got: {msg}"
+            );
+        }
+        Ok(_) => panic!("expected Err for empty workspace, got Ok"),
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Test Case 1: Workspace Scaffolding Abort Guardrail Validation
 // ---------------------------------------------------------------------------
 
