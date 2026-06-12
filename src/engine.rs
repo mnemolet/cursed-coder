@@ -173,11 +173,22 @@ pub fn has_steps_toml(workspace_dir: &Path) -> bool {
         .exists()
 }
 
+/// Returns `true` if the steps.toml content matches the default template.
+pub fn is_unconfigured_template(workspace_dir: &Path) -> bool {
+    let path = workspace_dir
+        .join(".cursedcoder")
+        .join("steps.toml");
+    fs::read_to_string(&path)
+        .map(|content| content.trim() == STEPS_TOML_TEMPLATE.trim())
+        .unwrap_or(false)
+}
+
 #[derive(Debug)]
 pub enum EngineError {
     StepNotFound(String),
     MaxCyclesReached { limit: u64, actual: u64 },
     MemoryCorruption(String),
+    UnconfiguredTemplate,
     Memory(crate::memory::MemoryError),
     Io(std::io::Error),
 }
@@ -193,6 +204,15 @@ impl std::fmt::Display for EngineError {
             }
             EngineError::MemoryCorruption(msg) => {
                 write!(f, "memory corruption detected: {msg}")
+            }
+            EngineError::UnconfiguredTemplate => {
+                write!(
+                    f,
+                    "Error: Workspace contains an unconfigured pipeline template.\n\
+                     [Cause]: The '.cursedcoder/steps.toml' file contains only the default placeholder steps.\n\
+                     [Fix]: Please edit '.cursedcoder/steps.toml' to define your actual project build, test, \
+                     or deployment steps before launching the autonomous agent."
+                )
             }
             EngineError::Memory(e) => write!(f, "memory error: {e}"),
             EngineError::Io(e) => write!(f, "I/O error: {e}"),

@@ -53,6 +53,11 @@ async fn main() {
                 std::process::exit(1);
             });
 
+            if engine::is_unconfigured_template(&cwd) {
+                eprintln!("{}", engine::EngineError::UnconfiguredTemplate);
+                std::process::exit(1);
+            }
+
             dashboard::print(
                 env!("CARGO_PKG_VERSION"),
                 &cwd,
