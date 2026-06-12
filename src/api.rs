@@ -131,7 +131,13 @@ pub async fn send_completion(
 
     info!("Sending request to {api_provider} using {model}");
 
-    completion(&api_provider, model, "You are a helpful coding assistant.", prompt).await
+    completion(
+        &api_provider,
+        model,
+        "You are a helpful coding assistant.",
+        prompt,
+    )
+    .await
 }
 
 async fn completion(

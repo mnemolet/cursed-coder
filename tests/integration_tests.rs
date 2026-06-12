@@ -5,7 +5,8 @@ use std::path::Path;
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_launch_in_empty_workspace_gracefully_terminates() -> Result<(), Box<dyn std::error::Error>> {
+fn test_launch_in_empty_workspace_gracefully_terminates() -> Result<(), Box<dyn std::error::Error>>
+{
     let dir = tempfile::tempdir()?;
 
     assert!(
@@ -133,7 +134,8 @@ fn test_init_does_not_leak_to_host_env() -> Result<(), Box<dyn std::error::Error
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_variable_substitution_from_memory() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn test_variable_substitution_from_memory() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+{
     let dir = tempfile::tempdir()?;
     let mut memory = cursed_coder::memory::Memory::load_or_create(dir.path())?;
 
@@ -158,7 +160,10 @@ fn test_variable_substitution_missing_key_errors() -> Result<(), Box<dyn std::er
     match cursed_coder::handlers::resolve_template("hello {MISSING}", &memory) {
         Err(e) => {
             let msg = e.to_string();
-            assert!(msg.contains("MISSING"), "error should mention the missing key: {msg}");
+            assert!(
+                msg.contains("MISSING"),
+                "error should mention the missing key: {msg}"
+            );
         }
         Ok(_) => panic!("expected Err for missing variable"),
     }
@@ -167,8 +172,8 @@ fn test_variable_substitution_missing_key_errors() -> Result<(), Box<dyn std::er
 }
 
 #[test]
-fn test_variable_substitution_unclosed_placeholder_errors(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn test_variable_substitution_unclosed_placeholder_errors() -> Result<(), Box<dyn std::error::Error>>
+{
     let dir = tempfile::tempdir()?;
     let memory = cursed_coder::memory::Memory::load_or_create(dir.path())?;
 
