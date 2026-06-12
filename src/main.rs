@@ -17,13 +17,22 @@ async fn main() {
         std::process::exit(1);
     }
 
+    let cfg = config::ensure_global_configs().unwrap_or_else(|e| {
+        eprintln!("Failed to load config: {e}");
+        std::process::exit(1);
+    });
+
+    let config_dir = dirs::config_dir()
+        .map(|p| p.join("cursedcoder"))
+        .unwrap_or_else(|| Path::new(".").to_path_buf());
+
+    cursed_coder::telemetry::init_telemetry(&cfg.log_level, config_dir.clone()).unwrap_or_else(|e| {
+        eprintln!("Failed to initialize telemetry: {e}");
+        std::process::exit(1);
+    });
+
     match args.command {
         Some(CliSubcommand::Init) => {
-            config::ensure_global_configs().unwrap_or_else(|e| {
-                eprintln!("Failed to load config: {e}");
-                std::process::exit(1);
-            });
-
             if let Err(e) = engine::initialize_workspace(&cwd) {
                 eprintln!("Failed to initialize workspace: {e}");
                 std::process::exit(1);
@@ -44,14 +53,6 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            let cfg = config::ensure_global_configs().unwrap_or_else(|e| {
-                eprintln!("Failed to load config: {e}");
-                std::process::exit(1);
-            });
-
-            let config_dir = dirs::config_dir()
-                .map(|p| p.join("cursedcoder"))
-                .unwrap_or_else(|| Path::new(".").to_path_buf());
             let config_path = config_dir.join("config.json");
 
             let graph = engine::parse_and_validate_steps(&cwd).unwrap_or_else(|e| {

@@ -9,3 +9,4 @@ pub mod handlers;
 pub mod memory;
 pub mod scanner;
 pub mod spinner;
+pub mod telemetry;
