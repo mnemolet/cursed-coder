@@ -128,7 +128,7 @@ fn test_variable_substitution_missing_key_errors() -> Result<(), Box<dyn std::er
 
     match cursed_coder::handlers::resolve_template("hello {MISSING}", &memory) {
         Err(e) => {
-            let msg = format!("{e}");
+            let msg = e.to_string();
             assert!(msg.contains("MISSING"), "error should mention the missing key: {msg}");
         }
         Ok(_) => panic!("expected Err for missing variable"),
