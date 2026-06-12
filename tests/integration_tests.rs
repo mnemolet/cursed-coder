@@ -6,25 +6,23 @@ use std::path::Path;
 
 #[test]
 fn test_root_path_guardrail_rejects_system_root() -> Result<(), Box<dyn std::error::Error>> {
-    let result = cursed_coder::guard::validate_workspace_root(Path::new("/"));
-    assert!(
-        result.is_err(),
-        "expected Err for root path, got Ok"
-    );
-    let msg = result.unwrap_err();
-    assert!(
-        msg.contains("Execution prohibited within host system root paths"),
-        "unexpected error message: {msg}"
-    );
+    if let Err(msg) = cursed_coder::guard::validate_workspace_root(Path::new("/")) {
+        assert!(
+            msg.contains("Execution prohibited within host system root paths"),
+            "unexpected error message: {msg}"
+        );
+    } else {
+        panic!("expected Err for root path, got Ok");
+    }
     Ok(())
 }
 
 #[test]
 fn test_root_path_guardrail_rejects_etc() -> Result<(), Box<dyn std::error::Error>> {
-    let result = cursed_coder::guard::validate_workspace_root(Path::new("/etc"));
-    assert!(result.is_err());
-    let msg = result.unwrap_err();
-    assert!(msg.contains("host system root paths"));
+    match cursed_coder::guard::validate_workspace_root(Path::new("/etc")) {
+        Err(msg) => assert!(msg.contains("host system root paths")),
+        Ok(_) => panic!("expected Err for /etc, got Ok"),
+    }
     Ok(())
 }
 
@@ -123,10 +121,13 @@ fn test_variable_substitution_missing_key_errors() -> Result<(), Box<dyn std::er
     let dir = tempfile::tempdir()?;
     let memory = cursed_coder::memory::Memory::load_or_create(dir.path())?;
 
-    let result = cursed_coder::handlers::resolve_template("hello {MISSING}", &memory);
-    assert!(result.is_err(), "expected Err for missing variable");
-    let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("MISSING"), "error should mention the missing key: {msg}");
+    match cursed_coder::handlers::resolve_template("hello {MISSING}", &memory) {
+        Err(e) => {
+            let msg = format!("{e}");
+            assert!(msg.contains("MISSING"), "error should mention the missing key: {msg}");
+        }
+        Ok(_) => panic!("expected Err for missing variable"),
+    }
 
     Ok(())
 }
