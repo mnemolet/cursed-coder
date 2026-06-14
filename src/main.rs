@@ -100,6 +100,14 @@ async fn main() {
                 "_cursed_workspace",
                 serde_json::Value::String(cwd.to_string_lossy().to_string()),
             );
+            runtime_memory.set_variable(
+                "_cursed_provider",
+                serde_json::Value::String(cfg.provider.clone()),
+            );
+            runtime_memory.set_variable(
+                "_cursed_model",
+                serde_json::Value::String(cfg.model.clone()),
+            );
 
             if let Err(e) =
                 engine::run_pipeline(max_cycles, graph.steps, &mut runtime_memory, &cwd).await

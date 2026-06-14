@@ -411,10 +411,57 @@ async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) ->
                     );
                     step.prompt.clone()
                 };
-                let simulated_tokens = content.len() as u64 / 4;
-                let simulated_cost = simulated_tokens as f64 * 0.000_002;
-                memory.add_tokens(simulated_tokens, simulated_cost);
-                StepOutcome::Success
+
+                let provider = memory
+                    .get_variable("_cursed_provider")
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default();
+                let model = memory
+                    .get_variable("_cursed_model")
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default();
+                let response_key = format!("_{}_response", step.name.replace(' ', "_"));
+
+                match handlers::execute_llm_completion(
+                    &provider,
+                    &model,
+                    &content,
+                    &response_key,
+                    memory,
+                )
+                .await
+                {
+                    Ok(response) => {
+                        let simulated_tokens = response.len() as u64 / 4;
+                        let simulated_cost = simulated_tokens as f64 * 0.000_002;
+                        memory.add_tokens(simulated_tokens, simulated_cost);
+                        info!(
+                            "Step '{}': LLM response ({} chars)",
+                            step.name,
+                            response.len()
+                        );
+
+                        match handlers::extract_and_execute_code_blocks(&response, workspace_dir) {
+                            Ok(combined) => {
+                                if !combined.is_empty() {
+                                    info!(
+                                        "Step '{}': code blocks produced stdout — {combined}",
+                                        step.name
+                                    );
+                                }
+                                StepOutcome::Success
+                            }
+                            Err(e) => {
+                                warn!("Step '{}': code block execution failed: {e}", step.name);
+                                StepOutcome::Failed
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Step '{}': LLM completion failed: {e}", step.name);
+                        StepOutcome::Failed
+                    }
+                }
             }
         }
         ActionType::Shell => {
