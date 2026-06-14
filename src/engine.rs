@@ -11,8 +11,16 @@ use tracing::{info, warn};
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionType {
-    LlmCompletion,
-    ShellCommand,
+    #[serde(alias = "llm_completion")]
+    Llm,
+    #[serde(alias = "shell_command")]
+    Shell,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct StepPayload {
+    #[serde(default)]
+    pub command: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -26,6 +34,8 @@ pub struct Step {
     #[serde(default)]
     pub command: String,
     #[serde(default)]
+    pub payload: Option<StepPayload>,
+    #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub on_success: String,
@@ -37,6 +47,18 @@ pub struct Step {
     pub on_retry: String,
     #[serde(default)]
     pub task_management_enabled: bool,
+}
+
+impl Step {
+    pub fn effective_command(&self) -> &str {
+        if !self.command.is_empty() {
+            &self.command
+        } else if let Some(payload) = &self.payload {
+            payload.command.as_str()
+        } else {
+            ""
+        }
+    }
 }
 
 const fn default_max_retries() -> u32 {
@@ -100,7 +122,7 @@ impl From<toml::de::Error> for GraphError {
 const STEPS_TOML_TEMPLATE: &str = r#"[[step]]
 name = "Initial Step"
 description = "First step of the cursed-coder pipeline"
-action_type = "llm_completion"
+action_type = "llm"
 prompt = ""
 command = ""
 enabled = true
@@ -360,7 +382,7 @@ async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) ->
     }
 
     let outcome = match step.action_type {
-        ActionType::LlmCompletion => {
+        ActionType::Llm => {
             if step.prompt.is_empty() {
                 info!("Step '{}': no prompt configured, skipping", step.name);
                 StepOutcome::Success
@@ -385,12 +407,12 @@ async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) ->
                 }
             }
         }
-        ActionType::ShellCommand => {
-            if step.command.is_empty() {
+        ActionType::Shell => {
+            if step.effective_command().is_empty() {
                 info!("Step '{}': no command configured, skipping", step.name);
                 StepOutcome::Success
             } else {
-                match handlers::execute_shell_command(&step.command, workspace_dir) {
+                match handlers::execute_shell_command(step.effective_command(), workspace_dir) {
                     Ok(output) => {
                         let stdout = String::from_utf8_lossy(&output.stdout);
                         if !stdout.is_empty() {
@@ -433,12 +455,15 @@ fn handle_task_driven_step(step: &Step, memory: &mut Memory, workspace_dir: &Pat
             );
 
             let outcome = match step.action_type {
-                ActionType::LlmCompletion => StepOutcome::TaskDrivenSuccess,
-                ActionType::ShellCommand => {
-                    if step.command.is_empty() {
+                ActionType::Llm => StepOutcome::TaskDrivenSuccess,
+                ActionType::Shell => {
+                    if step.effective_command().is_empty() {
                         StepOutcome::TaskDrivenSuccess
                     } else {
-                        match handlers::execute_shell_command(&step.command, workspace_dir) {
+                        match handlers::execute_shell_command(
+                            step.effective_command(),
+                            workspace_dir,
+                        ) {
                             Ok(_) => StepOutcome::TaskDrivenSuccess,
                             Err(e) => {
                                 warn!("Step '{}': task shell command failed: {e}", step.name);
