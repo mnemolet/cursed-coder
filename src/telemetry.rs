@@ -81,14 +81,11 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (y, m as u32, d as u32)
 }
 
-/// Initializes the global tracing subscriber with dual-layer output:
+/// Initializes the global tracing subscriber with file-only output.
 ///
-/// - **Terminal** (stderr): events passing the `EnvFilter` with the given
-///   `config_level` for this crate and `warn` for dependencies.
-/// - **File** (`<workspace>/.cursedcoder/<timestamp>.log`): all events, no ANSI.
-///
-/// If `RUST_LOG` is set, it overrides the entire filter string for both layers.
-pub fn init_telemetry(config_level: &str, log_dir: PathBuf) -> io::Result<()> {
+/// Logs are written to `<log_dir>/<timestamp>.log` with no ANSI
+/// formatting. Console output is suppressed.
+pub fn init_telemetry(config_level: &str, log_dir: PathBuf) -> std::io::Result<()> {
     std::fs::create_dir_all(&log_dir)?;
 
     let crate_name = env!("CARGO_PKG_NAME").replace('-', "_");
@@ -99,22 +96,18 @@ pub fn init_telemetry(config_level: &str, log_dir: PathBuf) -> io::Result<()> {
         EnvFilter::new(format!("warn,{crate_name}={}", config_level))
     };
 
-    let stderr_layer = fmt::Layer::new()
-        .with_writer(io::stderr)
-        .with_filter(filter);
-
     let log_path = log_dir.join(timestamp_filename());
     let log_writer = match OpenOptions::new().create(true).append(true).open(&log_path) {
         Ok(f) => LogWriter::File(Arc::new(Mutex::new(f))),
         Err(_) => LogWriter::Sink,
     };
 
-    let file_layer = fmt::Layer::new().with_writer(log_writer).with_ansi(false);
+    let file_layer = fmt::Layer::new()
+        .with_writer(log_writer)
+        .with_ansi(false)
+        .with_filter(filter);
 
-    Registry::default()
-        .with(stderr_layer)
-        .with(file_layer)
-        .init();
+    Registry::default().with(file_layer).init();
 
     Ok(())
 }
