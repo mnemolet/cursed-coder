@@ -115,18 +115,14 @@ pub fn extract_and_execute_code_blocks(
     let mut combined = String::new();
     let mut rest = text;
 
-    loop {
-        let start = match rest.find(CODE_FENCE_START) {
-            Some(i) => i,
-            None => break,
-        };
-        let after_fence = &rest[start + CODE_FENCE_START.len()..];
+    while let Some(i) = rest.find(CODE_FENCE_START) {
+        let after_fence = &rest[i + CODE_FENCE_START.len()..];
 
         let lang_end = after_fence
             .find('\n')
-            .map(|i| start + CODE_FENCE_START.len() + i)
+            .map(|j| i + CODE_FENCE_START.len() + j)
             .unwrap_or(rest.len());
-        let lang_line = &rest[start + CODE_FENCE_START.len()..lang_end];
+        let lang_line = &rest[i + CODE_FENCE_START.len()..lang_end];
         let lang = lang_line.trim();
 
         if !CODE_LANGS.contains(&lang) {
