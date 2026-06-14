@@ -91,10 +91,12 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 pub fn init_telemetry(config_level: &str, log_dir: PathBuf) -> io::Result<()> {
     std::fs::create_dir_all(&log_dir)?;
 
+    let crate_name = env!("CARGO_PKG_NAME").replace('-', "_");
+
     let filter = if let Ok(rust_log) = std::env::var("RUST_LOG") {
-        EnvFilter::new(rust_log)
+        EnvFilter::new(format!("{rust_log},warn,{crate_name}={}", config_level))
     } else {
-        EnvFilter::new(format!("warn,{}={}", env!("CARGO_PKG_NAME"), config_level))
+        EnvFilter::new(format!("warn,{crate_name}={}", config_level))
     };
 
     let stderr_layer = fmt::Layer::new()
