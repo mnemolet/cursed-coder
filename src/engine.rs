@@ -388,23 +388,33 @@ async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) ->
                 StepOutcome::Success
             } else {
                 let prompt_path = workspace_dir.join(&step.prompt);
-                match fs::read_to_string(&prompt_path) {
-                    Ok(content) => {
-                        info!(
-                            "Step '{}': LLM prompt loaded ({} bytes)",
-                            step.name,
-                            content.len()
-                        );
-                        let simulated_tokens = content.len() as u64 / 4;
-                        let simulated_cost = simulated_tokens as f64 * 0.000_002;
-                        memory.add_tokens(simulated_tokens, simulated_cost);
-                        StepOutcome::Success
+                let content = if prompt_path.exists() {
+                    match fs::read_to_string(&prompt_path) {
+                        Ok(c) => {
+                            info!(
+                                "Step '{}': LLM prompt loaded from file ({} bytes)",
+                                step.name,
+                                c.len()
+                            );
+                            c
+                        }
+                        Err(e) => {
+                            warn!("Step '{}': failed to read prompt file: {e}", step.name);
+                            return StepOutcome::Failed;
+                        }
                     }
-                    Err(e) => {
-                        warn!("Step '{}': failed to read prompt: {e}", step.name);
-                        StepOutcome::Failed
-                    }
-                }
+                } else {
+                    info!(
+                        "Step '{}': using inline prompt ({} chars)",
+                        step.name,
+                        step.prompt.len()
+                    );
+                    step.prompt.clone()
+                };
+                let simulated_tokens = content.len() as u64 / 4;
+                let simulated_cost = simulated_tokens as f64 * 0.000_002;
+                memory.add_tokens(simulated_tokens, simulated_cost);
+                StepOutcome::Success
             }
         }
         ActionType::Shell => {
