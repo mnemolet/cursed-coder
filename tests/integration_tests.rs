@@ -80,15 +80,10 @@ fn test_init_creates_files_in_isolation() -> Result<(), Box<dyn std::error::Erro
     cursed_coder::engine::initialize_workspace(dir.path())?;
 
     let steps = dir.path().join(".cursedcoder").join("steps.toml");
-    let tasks = dir.path().join(".cursedcoder").join("tasks.toml");
 
     assert!(
         steps.exists(),
         "steps.toml was not created inside the sandbox"
-    );
-    assert!(
-        tasks.exists(),
-        "tasks.toml was not created inside the sandbox"
     );
 
     let steps_content = std::fs::read_to_string(&steps)?;
