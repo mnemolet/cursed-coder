@@ -1,6 +1,5 @@
 use crate::handlers;
 use crate::memory::{Memory, StepOutcomeRecord};
-use crate::scanner;
 use crate::spinner::EngineSpinner;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -45,8 +44,6 @@ pub struct Step {
     pub max_retries: u32,
     #[serde(default)]
     pub on_retry: String,
-    #[serde(default)]
-    pub task_management_enabled: bool,
 }
 
 impl Step {
@@ -130,7 +127,6 @@ on_success = ""
 on_failure = ""
 max_retries = 1
 on_retry = ""
-task_management_enabled = false
 "#;
 
 pub fn initialize_workspace(workspace_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -140,11 +136,6 @@ pub fn initialize_workspace(workspace_dir: &Path) -> Result<(), Box<dyn std::err
     let steps_path = dot_dir.join("steps.toml");
     if !steps_path.exists() {
         fs::write(&steps_path, STEPS_TOML_TEMPLATE)?;
-    }
-
-    let tasks_path = dot_dir.join("tasks.toml");
-    if !tasks_path.exists() {
-        fs::write(&tasks_path, "")?;
     }
 
     Ok(())
@@ -268,7 +259,6 @@ impl From<std::io::Error> for EngineError {
 enum StepOutcome {
     Success,
     Failed,
-    TaskDrivenSuccess,
 }
 
 /// Runs the autonomous execution pipeline.
@@ -316,7 +306,7 @@ pub async fn run_pipeline(
         let outcome = execute_step(step, memory, workspace_dir).await;
 
         let (next, status_str) = match &outcome {
-            StepOutcome::TaskDrivenSuccess | StepOutcome::Success => (&step.on_success, "success"),
+            StepOutcome::Success => (&step.on_success, "success"),
             StepOutcome::Failed => {
                 if traversals as u32 <= step.max_retries {
                     (&step.on_retry, "retry")
@@ -338,10 +328,7 @@ pub async fn run_pipeline(
             return Err(EngineError::StepNotFound(transition));
         }
 
-        memory.record_step(matches!(
-            &outcome,
-            StepOutcome::Success | StepOutcome::TaskDrivenSuccess
-        ));
+        memory.record_step(matches!(&outcome, StepOutcome::Success));
 
         if matches!(&outcome, StepOutcome::Failed) {
             memory.metrics.backtrack_counts += 1;
@@ -375,10 +362,6 @@ pub async fn run_pipeline(
 
 async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) -> StepOutcome {
     info!("Executing step: {} ({:?})", step.name, step.action_type);
-
-    if step.task_management_enabled {
-        return handle_task_driven_step(step, memory, workspace_dir);
-    }
 
     match step.action_type {
         ActionType::Llm => {
@@ -486,73 +469,6 @@ async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) ->
                     }
                 }
             }
-        }
-    }
-}
-
-fn handle_task_driven_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) -> StepOutcome {
-    info!("Step '{}': task-driven mode enabled", step.name);
-
-    match scanner::parse_active_task(workspace_dir) {
-        scanner::TaskStatus::ActiveTask(task) => {
-            info!(
-                "Step '{}': reconciling with active task {} — {}",
-                step.name, task.id, task.task
-            );
-            memory.set_variable(
-                "_active_task_id",
-                serde_json::Value::Number(serde_json::Number::from(task.id)),
-            );
-            memory.set_variable(
-                "_active_task_description",
-                serde_json::Value::String(task.task),
-            );
-
-            let outcome = match step.action_type {
-                ActionType::Llm => StepOutcome::TaskDrivenSuccess,
-                ActionType::Shell => {
-                    if step.effective_command().is_empty() {
-                        StepOutcome::TaskDrivenSuccess
-                    } else {
-                        match handlers::execute_shell_command(
-                            step.effective_command(),
-                            workspace_dir,
-                        ) {
-                            Ok(_) => StepOutcome::TaskDrivenSuccess,
-                            Err(e) => {
-                                warn!("Step '{}': task shell command failed: {e}", step.name);
-                                StepOutcome::Failed
-                            }
-                        }
-                    }
-                }
-            };
-
-            if let Err(e) = scanner::mark_task_completed(workspace_dir, task.id) {
-                warn!(
-                    "Step '{}': failed to mark task {} complete: {e}",
-                    step.name, task.id
-                );
-            } else {
-                info!("Step '{}': marked task {} complete", step.name, task.id);
-            }
-
-            outcome
-        }
-        scanner::TaskStatus::AllTasksCompleted => {
-            info!("Step '{}': all tasks already completed", step.name);
-            StepOutcome::TaskDrivenSuccess
-        }
-        scanner::TaskStatus::NoTaskFile => {
-            info!(
-                "Step '{}': no tasks.toml found, falling back to standard mode",
-                step.name
-            );
-            StepOutcome::Success
-        }
-        scanner::TaskStatus::InvalidFormat(e) => {
-            warn!("Step '{}': tasks.toml has invalid format: {e}", step.name);
-            StepOutcome::Failed
         }
     }
 }
