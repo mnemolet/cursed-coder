@@ -380,7 +380,7 @@ async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) ->
         return handle_task_driven_step(step, memory, workspace_dir);
     }
 
-    let outcome = match step.action_type {
+    match step.action_type {
         ActionType::Llm => {
             if step.prompt.is_empty() {
                 info!("Step '{}': no prompt configured, skipping", step.name);
@@ -487,9 +487,7 @@ async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) ->
                 }
             }
         }
-    };
-
-    outcome
+    }
 }
 
 fn handle_task_driven_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) -> StepOutcome {

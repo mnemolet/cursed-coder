@@ -27,7 +27,7 @@ impl Write for LogWriter {
         match self {
             LogWriter::File(m) => m
                 .lock()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "mutex poisoned"))?
+                .map_err(|_| io::Error::other("mutex poisoned"))?
                 .write(buf),
             LogWriter::Sink => Ok(buf.len()),
         }
@@ -36,7 +36,7 @@ impl Write for LogWriter {
         match self {
             LogWriter::File(m) => m
                 .lock()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "mutex poisoned"))?
+                .map_err(|_| io::Error::other("mutex poisoned"))?
                 .flush(),
             LogWriter::Sink => Ok(()),
         }
