@@ -109,8 +109,14 @@ async fn main() {
                 serde_json::Value::String(cfg.model.clone()),
             );
 
-            if let Err(e) =
-                engine::run_pipeline(max_cycles, graph.steps, &mut runtime_memory, &cwd).await
+            if let Err(e) = engine::run_pipeline(
+                max_cycles,
+                graph.steps,
+                &mut runtime_memory,
+                &cwd,
+                &graph.entry_point,
+            )
+            .await
             {
                 eprintln!("Pipeline error: {e}");
                 std::process::exit(1);

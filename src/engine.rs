@@ -216,7 +216,6 @@ pub fn is_unconfigured_template(workspace_dir: &Path) -> bool {
 #[derive(Debug)]
 pub enum EngineError {
     StepNotFound(String),
-    MaxCyclesReached { limit: u64, actual: u64 },
     MemoryCorruption(String),
     UnconfiguredTemplate,
     Memory(crate::memory::MemoryError),
@@ -228,9 +227,6 @@ impl std::fmt::Display for EngineError {
         match self {
             EngineError::StepNotFound(name) => {
                 write!(f, "step '{name}' not found in execution graph")
-            }
-            EngineError::MaxCyclesReached { limit, actual } => {
-                write!(f, "max cycles ({limit}) reached after {actual} cycles")
             }
             EngineError::MemoryCorruption(msg) => {
                 write!(f, "memory corruption detected: {msg}")
@@ -280,38 +276,41 @@ enum StepOutcome {
 /// Starts at the graph's entry point and follows transition hops
 /// (`on_success`, `on_failure`, `on_retry`) until a terminating
 /// state (`""`, `"exit"`, `"done"`) or the cycle limit is reached.
+///
+/// A "cycle" is one full traversal of the graph — each time we return
+/// to the entry point (or hit a terminal transition) counts as one
+/// cycle. This ensures multi-step graphs make a complete pass before
+/// the cycle limit is checked.
 pub async fn run_pipeline(
     max_cycles: u64,
     steps: HashMap<String, Step>,
     memory: &mut Memory,
     workspace_dir: &Path,
+    entry_point: &str,
 ) -> Result<(), EngineError> {
     let spinner = EngineSpinner::new();
-    let mut current_step_name = memory
-        .get_variable("_cursed_entry_point")
-        .and_then(|v| v.as_str().map(String::from))
-        .unwrap_or_else(|| steps.keys().next().cloned().unwrap_or_default());
-    let mut cycle: u64 = 0;
+    let mut current_step_name = entry_point.to_string();
+    let mut traversals: u64 = 0;
 
     loop {
-        cycle += 1;
-        memory.increment_cycle();
+        if current_step_name == entry_point {
+            traversals += 1;
+            memory.increment_cycle();
 
-        if max_cycles > 0 && cycle > max_cycles {
-            info!("max_cycles ({max_cycles}) reached, stopping pipeline");
-            memory.cycle_analytics.current_cycle = cycle - 1;
-            memory.save()?;
-            return Err(EngineError::MaxCyclesReached {
-                limit: max_cycles,
-                actual: cycle - 1,
-            });
+            if max_cycles > 0 && traversals > max_cycles {
+                info!("max_cycles ({max_cycles}) reached, pipeline complete");
+                memory.cycle_analytics.current_cycle = traversals - 1;
+                memory.save()?;
+                spinner.finish_success();
+                return Ok(());
+            }
         }
 
         let step = steps
             .get(&current_step_name)
             .ok_or_else(|| EngineError::StepNotFound(current_step_name.clone()))?;
 
-        let msg = format!("[{cycle}] {}", step.name);
+        let msg = format!("[{traversals}] {}", step.name);
         spinner.set_message(msg);
 
         let outcome = execute_step(step, memory, workspace_dir).await;
@@ -319,7 +318,7 @@ pub async fn run_pipeline(
         let (next, status_str) = match &outcome {
             StepOutcome::TaskDrivenSuccess | StepOutcome::Success => (&step.on_success, "success"),
             StepOutcome::Failed => {
-                if cycle as u32 <= step.max_retries {
+                if traversals as u32 <= step.max_retries {
                     (&step.on_retry, "retry")
                 } else {
                     (&step.on_failure, "failed")
@@ -349,7 +348,7 @@ pub async fn run_pipeline(
         }
 
         memory.push_outcome(StepOutcomeRecord {
-            cycle,
+            cycle: traversals,
             step_name: step.name.clone(),
             status: status_str.to_string(),
             tokens_consumed: memory.cycle_analytics.total_tokens_consumed,
@@ -366,11 +365,11 @@ pub async fn run_pipeline(
         current_step_name = transition;
     }
 
-    memory.cycle_analytics.current_cycle = cycle;
+    memory.cycle_analytics.current_cycle = traversals;
     memory.record_step(true);
     memory.save()?;
     spinner.finish_success();
-    info!("Pipeline finished after {cycle} cycles");
+    info!("Pipeline finished after {traversals} cycles");
     Ok(())
 }
 
