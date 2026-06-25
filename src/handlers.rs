@@ -42,7 +42,13 @@ pub fn resolve_template(
 /// Executes an LLM completion step: resolves the prompt template,
 /// dispatches to `api::send_completion`, and stores the result into
 /// `memory.cross_step_variables` under `output_variable_key`.
-/// Returns the raw response text on success.
+///
+/// If project state exists, it is prepended to the prompt with
+/// instructions for the LLM to output state updates. Any state
+/// update block (`<!-- STATE_UPDATE:{ ... } -->`) in the response
+/// is parsed and applied to memory before returning.
+///
+/// Returns the cleaned response text on success.
 pub async fn execute_llm_completion(
     provider: &str,
     model: &str,
@@ -52,17 +58,50 @@ pub async fn execute_llm_completion(
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let resolved = resolve_template(prompt_template, memory)?;
 
+    let prompt = match memory.build_project_context() {
+        Some(ctx) => {
+            format!(
+                "{ctx}\n\n---\n\n{resolved}\n\n---\n\n\
+                 If you learned something new about the project during this step, \
+                 output a state update block at the very end of your response in \
+                 this exact format (no other text around it):\n\
+                 <!-- STATE_UPDATE:{{\"summary\":\"...\",\"current_focus\":\"...\",\
+                 \"completed_milestones\":[\"...\"],\"blockers\":[\"...\"]}} -->\n\
+                 Only include fields that changed. Omit fields that didn't change."
+            )
+        }
+        None => {
+            format!(
+                "{resolved}\n\n---\n\n\
+                 If you learned something new about the project during this step, \
+                 output a state update block at the very end of your response in \
+                 this exact format (no other text around it):\n\
+                 <!-- STATE_UPDATE:{{\"summary\":\"...\",\"current_focus\":\"...\",\
+                 \"completed_milestones\":[\"...\"],\"blockers\":[\"...\"]}} -->\n\
+                 Only include fields that changed. Omit fields that didn't change."
+            )
+        }
+    };
+
     info!("Sending LLM completion to {provider}/{model}");
 
-    let response = crate::api::send_completion(provider, model, &resolved).await?;
+    let response = crate::api::send_completion(provider, model, &prompt).await?;
+
+    let cleaned = match Memory::parse_state_update(&response) {
+        Some((update, cleaned)) => {
+            memory.apply_state_update(&update);
+            cleaned
+        }
+        None => response,
+    };
 
     memory.set_variable(
         output_variable_key,
-        serde_json::Value::String(response.clone()),
+        serde_json::Value::String(cleaned.clone()),
     );
 
     info!("LLM completion stored under '{output_variable_key}'");
-    Ok(response)
+    Ok(cleaned)
 }
 
 /// Executes a shell command within the `workspace_path` directory.

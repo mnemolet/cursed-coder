@@ -4,6 +4,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::{info, warn};
 
 #[derive(Debug)]
 pub enum MemoryError {
@@ -67,6 +68,17 @@ pub struct StepOutcomeRecord {
     pub transition: String,
 }
 
+#[derive(Default, Serialize, Deserialize, Debug, Clone)]
+pub struct ProjectState {
+    pub summary: String,
+    #[serde(default)]
+    pub completed_milestones: Vec<String>,
+    #[serde(default)]
+    pub current_focus: String,
+    #[serde(default)]
+    pub blockers: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Memory {
     pub metadata: MemoryMetadata,
@@ -78,6 +90,8 @@ pub struct Memory {
     pub metrics: Metrics,
     #[serde(default)]
     pub step_outcomes: Vec<StepOutcomeRecord>,
+    #[serde(default)]
+    pub project_state: ProjectState,
     #[serde(skip)]
     dir: PathBuf,
 }
@@ -130,6 +144,19 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (y, m as u32, d as u32)
 }
 
+/// A parsed state update extracted from an LLM response.
+#[derive(Deserialize, Debug, Clone)]
+pub struct StateUpdate {
+    pub summary: Option<String>,
+    pub completed_milestones: Option<Vec<String>>,
+    pub current_focus: Option<String>,
+    pub blockers: Option<Vec<String>>,
+}
+
+/// Marker that wraps a JSON state update block in LLM responses.
+pub const STATE_UPDATE_START: &str = "<!-- STATE_UPDATE:";
+pub const STATE_UPDATE_END: &str = "-->";
+
 impl Memory {
     pub fn load_or_create(dir: &Path) -> Result<Self, MemoryError> {
         fs::create_dir_all(dir)?;
@@ -161,6 +188,7 @@ impl Memory {
                     backtrack_counts: 0,
                 },
                 step_outcomes: Vec::new(),
+                project_state: ProjectState::default(),
                 dir: dir.to_path_buf(),
             };
             mem.save()?;
@@ -205,5 +233,224 @@ impl Memory {
         fs::write(&tmp_path, &json)?;
         fs::rename(&tmp_path, &path)?;
         Ok(())
+    }
+
+    /// Builds a human-readable project context string for injection into
+    /// LLM prompts. Returns `None` if the project state is empty.
+    pub fn build_project_context(&self) -> Option<String> {
+        let ps = &self.project_state;
+        let has_content = !ps.summary.is_empty()
+            || !ps.completed_milestones.is_empty()
+            || !ps.current_focus.is_empty()
+            || !ps.blockers.is_empty();
+
+        if !has_content {
+            return None;
+        }
+
+        let mut parts = Vec::new();
+
+        if !ps.summary.is_empty() {
+            parts.push(format!("Project: {}", ps.summary));
+        }
+        if !ps.completed_milestones.is_empty() {
+            let list = ps
+                .completed_milestones
+                .iter()
+                .map(|m| format!("- {m}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            parts.push(format!("Completed:\n{list}"));
+        }
+        if !ps.current_focus.is_empty() {
+            parts.push(format!("Current focus: {}", ps.current_focus));
+        }
+        if !ps.blockers.is_empty() {
+            let list = ps
+                .blockers
+                .iter()
+                .map(|b| format!("- {b}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            parts.push(format!("Blockers:\n{list}"));
+        }
+
+        Some(parts.join("\n\n"))
+    }
+
+    /// Applies a parsed `StateUpdate` to the project state, merging
+    /// completed milestones and replacing other fields.
+    pub fn apply_state_update(&mut self, update: &StateUpdate) {
+        if let Some(ref summary) = update.summary {
+            self.project_state.summary = summary.clone();
+        }
+        if let Some(ref milestones) = update.completed_milestones {
+            for m in milestones {
+                if !self.project_state.completed_milestones.contains(m) {
+                    self.project_state.completed_milestones.push(m.clone());
+                }
+            }
+        }
+        if let Some(ref focus) = update.current_focus {
+            self.project_state.current_focus = focus.clone();
+        }
+        if let Some(ref blockers) = update.blockers {
+            self.project_state.blockers = blockers.clone();
+        }
+        info!("Project state updated");
+    }
+
+    /// Parses a state update block from an LLM response.
+    ///
+    /// Looks for `<!-- STATE_UPDATE:{ ... } -->` in the response text.
+    /// Returns `(parsed_update, cleaned_response)` where the cleaned
+    /// response has the state update block removed.
+    pub fn parse_state_update(response: &str) -> Option<(StateUpdate, String)> {
+        let start = response.find(STATE_UPDATE_START)?;
+        let json_start = start + STATE_UPDATE_START.len();
+        let end = response[json_start..].find(STATE_UPDATE_END)?;
+        let json_str = response[json_start..json_start + end].trim();
+
+        let update: StateUpdate = match serde_json::from_str(json_str) {
+            Ok(u) => u,
+            Err(e) => {
+                warn!("Failed to parse state update JSON: {e}");
+                return None;
+            }
+        };
+
+        let mut cleaned = String::with_capacity(response.len());
+        cleaned.push_str(&response[..start]);
+        cleaned.push_str(&response[json_start + end + STATE_UPDATE_END.len()..]);
+        let cleaned = cleaned.trim().to_string();
+
+        Some((update, cleaned))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_memory() -> Memory {
+        let dir = tempfile::tempdir().unwrap();
+        Memory::load_or_create(dir.path()).unwrap()
+    }
+
+    #[test]
+    fn test_build_project_context_empty() {
+        let mem = temp_memory();
+        assert!(mem.build_project_context().is_none());
+    }
+
+    #[test]
+    fn test_build_project_context_with_summary() {
+        let mut mem = temp_memory();
+        mem.project_state.summary = "A Rust CLI tool".to_string();
+        let ctx = mem.build_project_context().unwrap();
+        assert!(ctx.contains("A Rust CLI tool"));
+    }
+
+    #[test]
+    fn test_build_project_context_full() {
+        let mut mem = temp_memory();
+        mem.project_state.summary = "Test project".to_string();
+        mem.project_state.current_focus = "parsing".to_string();
+        mem.project_state.completed_milestones = vec!["setup".to_string()];
+        mem.project_state.blockers = vec!["missing dep".to_string()];
+        let ctx = mem.build_project_context().unwrap();
+        assert!(ctx.contains("Test project"));
+        assert!(ctx.contains("parsing"));
+        assert!(ctx.contains("- setup"));
+        assert!(ctx.contains("- missing dep"));
+    }
+
+    #[test]
+    fn test_apply_state_update_summary() {
+        let mut mem = temp_memory();
+        let update = StateUpdate {
+            summary: Some("new summary".to_string()),
+            completed_milestones: None,
+            current_focus: None,
+            blockers: None,
+        };
+        mem.apply_state_update(&update);
+        assert_eq!(mem.project_state.summary, "new summary");
+    }
+
+    #[test]
+    fn test_apply_state_update_merges_milestones() {
+        let mut mem = temp_memory();
+        mem.project_state
+            .completed_milestones
+            .push("existing".to_string());
+        let update = StateUpdate {
+            summary: None,
+            completed_milestones: Some(vec!["new task".to_string(), "existing".to_string()]),
+            current_focus: None,
+            blockers: None,
+        };
+        mem.apply_state_update(&update);
+        assert_eq!(mem.project_state.completed_milestones.len(), 2);
+        assert!(
+            mem.project_state
+                .completed_milestones
+                .contains(&"existing".to_string())
+        );
+        assert!(
+            mem.project_state
+                .completed_milestones
+                .contains(&"new task".to_string())
+        );
+    }
+
+    #[test]
+    fn test_apply_state_update_replaces_blockers() {
+        let mut mem = temp_memory();
+        mem.project_state.blockers.push("old blocker".to_string());
+        let update = StateUpdate {
+            summary: None,
+            completed_milestones: None,
+            current_focus: None,
+            blockers: Some(vec!["new blocker".to_string()]),
+        };
+        mem.apply_state_update(&update);
+        assert_eq!(mem.project_state.blockers, vec!["new blocker"]);
+    }
+
+    #[test]
+    fn test_parse_state_update_valid() {
+        let response = "Here is what I did.\n\n<!-- STATE_UPDATE:{\"summary\":\"Test project\",\"current_focus\":\"parsing\"} -->";
+        let (update, cleaned) = Memory::parse_state_update(response).unwrap();
+        assert_eq!(update.summary.as_deref(), Some("Test project"));
+        assert_eq!(update.current_focus.as_deref(), Some("parsing"));
+        assert_eq!(cleaned, "Here is what I did.");
+    }
+
+    #[test]
+    fn test_parse_state_update_no_block() {
+        let response = "Just a plain response with no state update.";
+        assert!(Memory::parse_state_update(response).is_none());
+    }
+
+    #[test]
+    fn test_parse_state_update_invalid_json() {
+        let response = "text <!-- STATE_UPDATE:not valid json --> more";
+        assert!(Memory::parse_state_update(response).is_none());
+    }
+
+    #[test]
+    fn test_parse_state_update_with_milestones() {
+        let response = "Done!\n<!-- STATE_UPDATE:{\"completed_milestones\":[\"step1\",\"step2\"],\"summary\":\"proj\"} -->";
+        let (update, cleaned) = Memory::parse_state_update(response).unwrap();
+        assert_eq!(update.completed_milestones.unwrap(), vec!["step1", "step2"]);
+        assert_eq!(cleaned, "Done!");
+    }
+
+    #[test]
+    fn test_parse_state_update_preserves_surrounding_text() {
+        let response = "Before\n<!-- STATE_UPDATE:{\"summary\":\"x\"} -->\nAfter";
+        let (_, cleaned) = Memory::parse_state_update(response).unwrap();
+        assert_eq!(cleaned, "Before\n\nAfter");
     }
 }
