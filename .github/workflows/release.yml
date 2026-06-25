@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-release:
+    name: build-release
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    # SINGLE SOURCE OF TRUTH: Define your binary name here
+    env:
+      BIN_NAME: cursedcoder
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            ext: ""
+          - build: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: win-x86_64
+            ext: ".exe"
+          - build: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos-x86_64
+            ext: ""
+          - build: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            platform: macos-arm64
+            ext: ""
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+
+    - name: Rust Cache
+      uses: swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.target }}
+
+    - name: Build
+      run: cargo build --release --target ${{ matrix.target }} --locked
+
+    - name: Strip Symbols
+      if: matrix.os != 'windows-latest'
+      run: strip target/${{ matrix.target }}/release/${{ env.BIN_NAME }}
+
+    - name: Run UPX
+      if: matrix.os == 'ubuntu-latest'
+      uses: crazy-max/ghaction-upx@v3
+      with:
+        version: latest
+        files: target/${{ matrix.target }}/release/${{ env.BIN_NAME }}
+        args: --best --lzma
+
+    - name: Set Changelog Base Reference
+      if: matrix.os == 'ubuntu-latest'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Try to find the latest production release tag via GitHub CLI
+        LATEST_RELEASE=$(gh release view --json tagName --template '{{.tagName}}' 2>/dev/null || echo "")
+
+        if [ -n "$LATEST_RELEASE" ]; then
+          echo "CHANGELOG_BASE=$LATEST_RELEASE" >> $GITHUB_ENV
+        else
+          # Fallback to the root commit hash of your repository if no release exists
+          echo "CHANGELOG_BASE=$(git rev-list --max-parents=0 HEAD)" >> $GITHUB_ENV
+        fi
+
+    - name: Generate Changelog
+      id: changelog
+      if: matrix.os == 'ubuntu-latest'
+      uses: jaywcjlove/changelog-generator@v4.1.0
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        base-ref: ${{ env.CHANGELOG_BASE }}
+
+    - name: Upload binaries to release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: target/${{ matrix.target }}/release/${{ env.BIN_NAME }}${{ matrix.ext }}
+        asset_name: ${{ env.BIN_NAME }}_${{ matrix.platform }}${{ matrix.ext }}
+        tag: ${{ github.ref_name }}
+        overwrite: true
+        prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        body: ${{ matrix.os == 'ubuntu-latest' && steps.changelog.outputs.changelog || null }}
