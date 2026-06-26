@@ -10,3 +10,4 @@ pub mod memory;
 pub mod scanner;
 pub mod spinner;
 pub mod telemetry;
+pub mod tools;

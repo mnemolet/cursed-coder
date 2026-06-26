@@ -44,6 +44,8 @@ pub struct Step {
     pub max_retries: u32,
     #[serde(default)]
     pub on_retry: String,
+    #[serde(default)]
+    pub tool_calling: bool,
 }
 
 impl Step {
@@ -404,15 +406,28 @@ async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) ->
                     .unwrap_or_default();
                 let response_key = format!("_{}_response", step.name.replace(' ', "_"));
 
-                match handlers::execute_llm_completion(
-                    &provider,
-                    &model,
-                    &content,
-                    &response_key,
-                    memory,
-                )
-                .await
-                {
+                let llm_result = if step.tool_calling {
+                    handlers::execute_llm_with_tools(
+                        &provider,
+                        &model,
+                        &content,
+                        &response_key,
+                        memory,
+                        workspace_dir,
+                    )
+                    .await
+                } else {
+                    handlers::execute_llm_completion(
+                        &provider,
+                        &model,
+                        &content,
+                        &response_key,
+                        memory,
+                    )
+                    .await
+                };
+
+                match llm_result {
                     Ok(response) => {
                         let simulated_tokens = response.len() as u64 / 4;
                         let simulated_cost = simulated_tokens as f64 * 0.000_002;
@@ -423,19 +438,29 @@ async fn execute_step(step: &Step, memory: &mut Memory, workspace_dir: &Path) ->
                             response.len()
                         );
 
-                        match handlers::extract_and_execute_code_blocks(&response, workspace_dir) {
-                            Ok(combined) => {
-                                if !combined.is_empty() {
-                                    info!(
-                                        "Step '{}': code blocks produced stdout — {combined}",
-                                        step.name
-                                    );
+                        // When tool_calling is enabled, tools were already
+                        // executed in the multi-turn loop — skip code-block
+                        // extraction.
+                        if step.tool_calling {
+                            StepOutcome::Success
+                        } else {
+                            match handlers::extract_and_execute_code_blocks(
+                                &response,
+                                workspace_dir,
+                            ) {
+                                Ok(combined) => {
+                                    if !combined.is_empty() {
+                                        info!(
+                                            "Step '{}': code blocks produced stdout — {combined}",
+                                            step.name
+                                        );
+                                    }
+                                    StepOutcome::Success
                                 }
-                                StepOutcome::Success
-                            }
-                            Err(e) => {
-                                warn!("Step '{}': code block execution failed: {e}", step.name);
-                                StepOutcome::Failed
+                                Err(e) => {
+                                    warn!("Step '{}': code block execution failed: {e}", step.name);
+                                    StepOutcome::Failed
+                                }
                             }
                         }
                     }
