@@ -241,6 +241,28 @@ PRs should include:
 - **Testing** — How the changes were verified
 - **Checklist** — `cargo fmt`, `clippy`, `tests` all passing
 
+## Roadmap
+
+### In Progress
+- [ ] LLM tool calling — Replace code-block parsing with native function calling for more reliable structured output
+- [ ] File edit action — Dedicated `edit` action type with diff-based file modifications
+- [ ] Git integration — Branch, commit, and push from within the pipeline
+
+### Planned
+- [ ] MCP client — Connect to external MCP servers (GitHub, Playwright, databases, search) as pipeline actions
+- [ ] TUI dashboard — Real-time terminal UI showing pipeline progress, step outputs, and cost (ratatui)
+- [ ] Parallel step execution — Run independent steps concurrently within a cycle
+- [ ] Custom actions — User-defined action types via Python/Shell scripts
+- [ ] Auto-discovery — Analyze workspace and suggest a steps.toml pipeline
+- [ ] Dry-run mode — Preview pipeline execution without running LLM calls or commands
+
+### Under Consideration
+- [ ] MCP server — Expose cursed-coder capabilities (run pipeline, query memory, execute steps) to external tools (Claude Desktop, VS Code, etc.)
+- [ ] Plugin system — Extend with community-contributed LLM providers and action types
+- [ ] Webhook notifications — Send step completion/failure events to Slack, Discord, etc.
+- [ ] Cost budgeting — Set per-cycle or per-session cost limits with automatic cutoff
+- [ ] Multi-workspace support — Run pipelines across multiple repositories
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE) for details.
